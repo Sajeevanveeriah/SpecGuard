@@ -1,0 +1,20 @@
+# SpecGuard - Dependencies
+# Python 3.11+
+
+# Core Framework
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+pydantic>=2.5.0
+python-multipart>=0.0.6
+
+# Document Parsing
+pymupdf>=1.23.0      # PDF parsing (fitz)
+python-docx>=1.0.0   # DOCX parsing
+
+# Optional: Enhanced Output
+openpyxl>=3.1.0      # XLSX generation
+
+# Development (optional)
+# pytest>=7.4.0
+# pytest-asyncio>=0.21.0
+# httpx>=0.25.0
