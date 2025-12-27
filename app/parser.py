@@ -230,7 +230,7 @@ def _create_chunks(
                 page=page,
                 section=section,
                 line_start=current_start_line,
-                line_end=line_count
+                line_end=line_count - 1
             ),
             chunk_index=chunk_index,
             keywords=_extract_keywords(current_chunk)
