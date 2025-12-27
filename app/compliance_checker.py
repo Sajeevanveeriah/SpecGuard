@@ -38,7 +38,8 @@ def check_compliance(
     design_document: ParsedDocument,
     retriever: LexicalRetriever,
     use_llm: bool = False,
-    llm_adapter: Optional[callable] = None
+    llm_adapter: Optional[callable] = None,
+    top_k: int = 5
 ) -> list[ComplianceResult]:
     """
     Check compliance of design against all requirements.
@@ -49,6 +50,7 @@ def check_compliance(
         retriever: Indexed retriever for finding relevant sections
         use_llm: Whether to use LLM for evaluation
         llm_adapter: Callable for LLM inference
+        top_k: Number of chunks to retrieve for evidence per requirement
 
     Returns:
         List of compliance results for each requirement
@@ -60,9 +62,9 @@ def check_compliance(
         logger.debug(f"Checking requirement {i + 1}/{len(requirements)}: {requirement.id}")
 
         if use_llm and llm_adapter:
-            result = _check_with_llm(requirement, design_document, retriever, llm_adapter)
+            result = _check_with_llm(requirement, design_document, retriever, llm_adapter, top_k=top_k)
         else:
-            result = _check_rule_based(requirement, design_document, retriever)
+            result = _check_rule_based(requirement, design_document, retriever, top_k=top_k)
 
         results.append(result)
 
@@ -78,7 +80,8 @@ def check_compliance(
 def _check_rule_based(
     requirement: Requirement,
     design_document: ParsedDocument,
-    retriever: LexicalRetriever
+    retriever: LexicalRetriever,
+    top_k: int = 5
 ) -> ComplianceResult:
     """
     Check compliance using rule-based analysis.
@@ -89,7 +92,7 @@ def _check_rule_based(
     relevant_chunks = retriever.retrieve_for_requirement(
         requirement,
         design_document.filename,
-        top_k=5
+        top_k=top_k
     )
 
     # Analyze retrieved chunks for evidence
@@ -156,7 +159,8 @@ def _check_with_llm(
     requirement: Requirement,
     design_document: ParsedDocument,
     retriever: LexicalRetriever,
-    llm_adapter: callable
+    llm_adapter: callable,
+    top_k: int = 5
 ) -> ComplianceResult:
     """
     Check compliance using LLM evaluation.
@@ -167,7 +171,7 @@ def _check_with_llm(
     prompt_path = Path(__file__).parent.parent / "prompts" / "compliance_check.md"
     if not prompt_path.exists():
         logger.warning("LLM prompt template not found, falling back to rule-based")
-        return _check_rule_based(requirement, design_document, retriever)
+        return _check_rule_based(requirement, design_document, retriever, top_k=top_k)
 
     with open(prompt_path, "r") as f:
         prompt_template = f.read()
@@ -176,7 +180,7 @@ def _check_with_llm(
     relevant_chunks = retriever.retrieve_for_requirement(
         requirement,
         design_document.filename,
-        top_k=5
+        top_k=top_k
     )
 
     # Build design excerpts string
@@ -198,7 +202,7 @@ def _check_with_llm(
         return _parse_llm_compliance_result(response, requirement.id)
     except Exception as e:
         logger.error(f"LLM compliance check failed: {e}")
-        return _check_rule_based(requirement, design_document, retriever)
+        return _check_rule_based(requirement, design_document, retriever, top_k=top_k)
 
 
 def _parse_llm_compliance_result(llm_response: str, requirement_id: str) -> ComplianceResult:

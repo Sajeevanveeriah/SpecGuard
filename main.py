@@ -10,40 +10,36 @@ Usage:
 
 import hashlib
 import logging
-import uuid
+import os
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from app.compliance_checker import check_compliance, compliance_summary
-from app.models import (
-    AnalysisResult,
-    AnalysisSummary,
-    ComplianceResult,
-    GeneratedArtifacts,
-    Requirement,
-    Verdict,
-    RiskLevel,
-)
 from app.parser import parse_from_bytes
 from app.report_generator import generate_artifacts, generate_xlsx_matrix
 from app.requirements import extract_requirements
 from app.retriever import create_retriever
 
 # Configure logging
+log_level = os.getenv("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(
-    level=logging.INFO,
+    level=log_level,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
 # Output directory
-OUTPUT_DIR = Path("outputs")
-OUTPUT_DIR.mkdir(exist_ok=True)
+OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", "outputs"))
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+# Parsing configuration defaults
+DEFAULT_CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "1500"))
+DEFAULT_CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "200"))
+DEFAULT_TOP_K = int(os.getenv("RETRIEVER_TOP_K", "5"))
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -98,7 +94,10 @@ async def health_check():
 @app.post("/analyze", response_model=AnalysisResponse)
 async def analyze(
     spec_file: UploadFile = File(..., description="Specification document (PDF, DOCX, or MD)"),
-    design_file: UploadFile = File(..., description="Design artifact (PDF, DOCX, or MD)")
+    design_file: UploadFile = File(..., description="Design artifact (PDF, DOCX, or MD)"),
+    chunk_size: int = Query(DEFAULT_CHUNK_SIZE, ge=200, le=10000, description="Chunk size in characters"),
+    chunk_overlap: int = Query(DEFAULT_CHUNK_OVERLAP, ge=0, le=2000, description="Chunk overlap in characters"),
+    top_k: int = Query(DEFAULT_TOP_K, ge=1, le=20, description="Number of evidence chunks to retrieve per requirement")
 ):
     """
     Analyze a specification against a design artifact.
@@ -127,16 +126,32 @@ async def analyze(
     logger.info(f"Starting analysis {analysis_id}: {spec_file.filename} vs {design_file.filename}")
 
     try:
+        if chunk_overlap >= chunk_size:
+            raise HTTPException(
+                status_code=400,
+                detail="chunk_overlap must be smaller than chunk_size"
+            )
+
         # Read file contents
         spec_content = await spec_file.read()
         design_content = await design_file.read()
 
         # Parse documents
         logger.info("Parsing specification document...")
-        spec_doc = parse_from_bytes(spec_content, spec_file.filename)
+        spec_doc = parse_from_bytes(
+            spec_content,
+            spec_file.filename,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap
+        )
 
         logger.info("Parsing design document...")
-        design_doc = parse_from_bytes(design_content, design_file.filename)
+        design_doc = parse_from_bytes(
+            design_content,
+            design_file.filename,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap
+        )
 
         # Extract requirements
         logger.info("Extracting requirements...")
@@ -158,7 +173,13 @@ async def analyze(
 
         # Check compliance
         logger.info("Checking compliance...")
-        results = check_compliance(requirements, design_doc, retriever, use_llm=False)
+        results = check_compliance(
+            requirements,
+            design_doc,
+            retriever,
+            use_llm=False,
+            top_k=top_k
+        )
 
         # Generate artifacts
         logger.info("Generating artifacts...")
@@ -175,6 +196,7 @@ async def analyze(
         xlsx_path = generate_xlsx_matrix(requirements, results, OUTPUT_DIR, analysis_id)
         if xlsx_path:
             logger.info(f"XLSX matrix generated: {xlsx_path}")
+            artifacts.traceability_matrix_xlsx = str(xlsx_path)
 
         # Build response
         summary = compliance_summary(results)

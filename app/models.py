@@ -193,6 +193,7 @@ class GeneratedArtifacts(BaseModel):
     compliance_report_md: str
     requirements_json: str
     full_results_json: str
+    traceability_matrix_xlsx: Optional[str] = None
 
 
 # Update forward references
